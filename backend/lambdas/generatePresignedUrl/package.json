@@ -1,0 +1,11 @@
+{
+"name": "sml-generate-presigned-url",
+"version": "1.0.0",
+"description": "Lambda que genera presigned URLs para subida a S3",
+"main": "index.js",
+"dependencies": {
+"@aws-sdk/client-s3": "^3.0.0",
+"@aws-sdk/s3-request-presigner": "^3.0.0",
+"uuid": "^9.0.0"
+}
+}
