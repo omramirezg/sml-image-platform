@@ -293,11 +293,35 @@ aws s3api put-bucket-notification-configuration \
 
 ### 7.2 API Gateway
 
-Pendiente de despliegue. Cuando exista, registrar:
+Desplegada con CloudFormation (template `backend/infra/api-gateway.yaml`, stack `sml-api`).
 
-- API Gateway ID
-- URL base (`https://{api-id}.execute-api.us-east-1.amazonaws.com/prod`)
-- Endpoints: `POST /upload`, `GET /history`, `GET /status/{id}`
+| Campo | Valor |
+|---|---|
+| API ID | `bg7yhanxyg` |
+| Stack name | `sml-api` |
+| Stage | `prod` |
+| URL base | `https://bg7yhanxyg.execute-api.us-east-1.amazonaws.com/prod` |
+
+Endpoints disponibles (actualmente con MOCK integrations):
+
+| Method | Path | URL completa | Estado |
+|---|---|---|---|
+| POST | `/upload` | `https://bg7yhanxyg.execute-api.us-east-1.amazonaws.com/prod/upload` | MOCK |
+| GET | `/history` | `https://bg7yhanxyg.execute-api.us-east-1.amazonaws.com/prod/history` | MOCK |
+| GET | `/status/{id}` | `https://bg7yhanxyg.execute-api.us-east-1.amazonaws.com/prod/status/{id}` | MOCK |
+
+CORS preflight (OPTIONS) habilitado en los 3 endpoints.
+
+Para reemplazar MOCK por Lambda integrations, actualizar el template o usar la consola: API Gateway → sml-api → Resources → seleccionar method → Integration Request → cambiar Integration type de Mock a Lambda Function.
+
+Para redeployar después de cambios:
+
+```bash
+aws cloudformation deploy \
+  --template-file backend/infra/api-gateway.yaml \
+  --stack-name sml-api \
+  --region us-east-1
+```
 
 ### 7.3 Lambda functions
 

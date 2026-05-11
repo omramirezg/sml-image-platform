@@ -1,0 +1,277 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SmartMedia Labs - API Gateway con 3 endpoints (mock integrations)
+
+# ============================================================
+# Este template crea la API Gateway base del proyecto.
+# Las integraciones son MOCK (devuelven respuestas falsas).
+# Cuando Juan Pablo tenga sus Lambdas, las integraciones
+# Mock se reemplazan por Lambda integrations.
+# ============================================================
+
+Resources:
+
+  # ============================================================
+  # 1. REST API (el container principal)
+  # ============================================================
+  SmlApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: sml-api
+      Description: API REST de SmartMedia Labs para upload y consulta de imagenes
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # ============================================================
+  # 2. Resources (las rutas /upload, /history, /status, /status/{id})
+  # ============================================================
+
+  # /upload
+  UploadResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref SmlApi
+      ParentId: !GetAtt SmlApi.RootResourceId
+      PathPart: upload
+
+  # /history
+  HistoryResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref SmlApi
+      ParentId: !GetAtt SmlApi.RootResourceId
+      PathPart: history
+
+  # /status (padre del recurso con parametro)
+  StatusResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref SmlApi
+      ParentId: !GetAtt SmlApi.RootResourceId
+      PathPart: status
+
+  # /status/{id}
+  StatusIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref SmlApi
+      ParentId: !Ref StatusResource
+      PathPart: '{id}'
+
+  # ============================================================
+  # 3. Methods - POST /upload (con MOCK integration)
+  # ============================================================
+  UploadPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SmlApi
+      ResourceId: !Ref UploadResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: |
+                {
+                  "uploadUrl": "https://example.com/mock-presigned-url-replace-when-lambda-ready",
+                  "imageId": "mock-uuid-replace-when-lambda-ready"
+                }
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # OPTIONS /upload (CORS preflight)
+  UploadOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SmlApi
+      ResourceId: !Ref UploadResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+
+  # ============================================================
+  # 4. Methods - GET /history (con MOCK integration)
+  # ============================================================
+  HistoryGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SmlApi
+      ResourceId: !Ref HistoryResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: |
+                {
+                  "images": [],
+                  "note": "MOCK response - se reemplaza cuando Juan Pablo despliegue la Lambda"
+                }
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # OPTIONS /history (CORS preflight)
+  HistoryOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SmlApi
+      ResourceId: !Ref HistoryResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+
+  # ============================================================
+  # 5. Methods - GET /status/{id} (con MOCK integration)
+  # ============================================================
+  StatusIdGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SmlApi
+      ResourceId: !Ref StatusIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: |
+                {
+                  "imageId": "$input.params('id')",
+                  "status": "MOCK_PENDING",
+                  "outputUrl": null,
+                  "note": "MOCK response - se reemplaza cuando Juan Pablo despliegue la Lambda"
+                }
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # OPTIONS /status/{id} (CORS preflight)
+  StatusIdOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SmlApi
+      ResourceId: !Ref StatusIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+
+  # ============================================================
+  # 6. Deployment + Stage (publica la API en una URL)
+  # ============================================================
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - UploadPostMethod
+      - UploadOptionsMethod
+      - HistoryGetMethod
+      - HistoryOptionsMethod
+      - StatusIdGetMethod
+      - StatusIdOptionsMethod
+    Properties:
+      RestApiId: !Ref SmlApi
+      Description: Initial deployment with mock integrations
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref SmlApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+      Description: Production stage
+
+# ============================================================
+# Outputs - valores que CloudFormation expone post-deploy
+# ============================================================
+Outputs:
+  ApiId:
+    Description: ID de la API Gateway
+    Value: !Ref SmlApi
+    Export:
+      Name: SmlApiId
+
+  ApiUrl:
+    Description: URL base de la API
+    Value: !Sub 'https://${SmlApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: SmlApiUrl
+
+  UploadEndpoint:
+    Description: Endpoint para solicitar presigned URL de upload
+    Value: !Sub 'https://${SmlApi}.execute-api.${AWS::Region}.amazonaws.com/prod/upload'
+
+  HistoryEndpoint:
+    Description: Endpoint para listar historial de imagenes
+    Value: !Sub 'https://${SmlApi}.execute-api.${AWS::Region}.amazonaws.com/prod/history'
+
+  StatusEndpoint:
+    Description: Endpoint para consultar estado de una imagen
+    Value: !Sub 'https://${SmlApi}.execute-api.${AWS::Region}.amazonaws.com/prod/status/{id}'
