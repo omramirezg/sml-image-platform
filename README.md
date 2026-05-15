@@ -265,6 +265,36 @@ aws iam list-attached-role-policies --role-name sml-lambda-execution-role
 aws apigateway get-rest-api --rest-api-id bg7yhanxyg --region us-east-1
 ```
 
+
+---
+
+## Cleanup
+
+```bash
+# S3 (vaciar antes de borrar)
+for bucket in sml-images-input sml-images-output sml-frontend; do
+  aws s3 rm s3://$bucket --recursive
+  aws s3api delete-bucket --bucket $bucket
+done
+
+# DynamoDB (deshabilitar deletion protection primero)
+aws dynamodb update-table \
+  --table-name sml-image-metadata \
+  --no-deletion-protection-enabled
+aws dynamodb delete-table --table-name sml-image-metadata
+
+# SNS
+aws sns delete-topic \
+  --topic-arn arn:aws:sns:us-east-1:372123585270:sml-image-notifications
+
+# IAM Role
+for policy in AWSLambdaBasicExecutionRole AmazonS3FullAccess AmazonDynamoDBFullAccess AmazonSNSFullAccess; do
+  aws iam detach-role-policy \
+    --role-name sml-lambda-execution-role \
+    --policy-arn arn:aws:iam::aws:policy/$policy
+done
+aws iam delete-role --role-name sml-lambda-execution-role
+
 # Stack API Gateway
 aws cloudformation delete-stack --stack-name sml-api
 ```
