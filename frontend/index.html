@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SmartMedia Labs </title>
+  <meta name="description" content="Sube una imagen y deja que la nube la optimice automáticamente." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-name">SmartMedia<span class="brand-accent">Labs</span></span>
+    </div>
+    <div class="status-pill">
+      <span class="status-dot"></span>
+      <span id="connStatus">Conectando…</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>
+        Optimiza imágenes <span class="grad">al vuelo</span>.
+      </h1>
+      <p class="subtitle">
+        Sube una imagen y la procesamos en la nube para reducir su peso sin sacrificar calidad.
+      </p>
+    </section>
+
+    <section class="uploader" id="uploader" aria-label="Zona de subida">
+      <input type="file" id="fileInput" accept="image/*" hidden />
+
+      <!-- State: idle -->
+      <div class="drop-zone" id="dropZone" tabindex="0" role="button" aria-label="Arrastra o haz clic para subir">
+        <div class="drop-inner">
+          <div class="drop-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 16V4" />
+              <path d="m6 10 6-6 6 6" />
+              <path d="M4 20h16" />
+            </svg>
+          </div>
+          <div class="drop-text">
+            <strong>Arrastra una imagen</strong>
+            <span>o <u>haz clic para elegir</u> · PNG, JPG, WebP — hasta 10 MB</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- State: processing / result -->
+      <div class="card hidden" id="resultCard" aria-live="polite">
+        <div class="result-grid">
+          <div class="result-side">
+            <div class="result-label">Original</div>
+            <div class="thumb"><img id="originalPreview" alt="" /></div>
+            <div class="meta">
+              <span id="originalName" class="meta-name">—</span>
+              <span id="originalSize" class="meta-size mono">—</span>
+            </div>
+          </div>
+
+          <div class="result-arrow" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14" /><path d="m13 6 6 6-6 6" />
+            </svg>
+          </div>
+
+          <div class="result-side">
+            <div class="result-label">Optimizada</div>
+            <div class="thumb thumb-out">
+              <img id="processedPreview" alt="" />
+              <div class="processing-overlay" id="processingOverlay">
+                <div class="ring"></div>
+                <span id="processingLabel">Procesando…</span>
+              </div>
+            </div>
+            <div class="meta">
+              <span id="processedStatus" class="meta-name">Esperando…</span>
+              <span id="processedSize" class="meta-size mono">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="result-footer">
+          <div class="savings hidden" id="savings">
+            <span class="savings-label">Ahorro</span>
+            <span class="savings-value mono" id="savingsValue">—</span>
+          </div>
+          <div class="actions">
+            <a class="btn ghost hidden" id="downloadBtn" download>Descargar</a>
+            <button class="btn primary" id="newUploadBtn" type="button">Nueva imagen</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="history" aria-label="Historial">
+      <header class="section-header">
+        <div class="section-heading">
+          <h2>Historial</h2>
+          <p class="section-subtitle hidden" id="historyHint">Mostrando las últimas 24</p>
+        </div>
+        <button class="link-btn" id="refreshHistoryBtn" type="button">Actualizar</button>
+      </header>
+
+      <div class="history-grid" id="historyGrid">
+        <div class="empty" id="historyEmpty">
+          Aún no hay imágenes procesadas. Sube una para empezar.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span class="mono">SmartMedia Labs · Cloud Image Pipeline</span>
+  </footer>
+
+  <!-- Toast container -->
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
