@@ -1,0 +1,189 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SmartMedia Labs - CloudFront distribution con 2 origins (S3 frontend + API Gateway)
+
+# ============================================================
+# Arquitectura: CloudFront actua como puerta de entrada unica.
+#
+#   Cliente
+#      v
+#   CloudFront
+#      |__ Default (/, /assets/*, /index.html) -> S3 sml-frontend
+#      |__ /api/*                              -> API Gateway sml-api
+#
+# Beneficios:
+#   - Un solo dominio para todo el sistema
+#   - HTTPS centralizado
+#   - Cache para assets estaticos
+#   - Origin Shield protege al API Gateway
+#   - Permite agregar AWS WAF en un solo lugar
+# ============================================================
+
+Parameters:
+
+  FrontendBucketDomainName:
+    Type: String
+    Default: sml-frontend.s3.us-east-1.amazonaws.com
+    Description: Domain name del bucket S3 que aloja el frontend estatico
+
+  ApiGatewayDomainName:
+    Type: String
+    Default: bg7yhanxyg.execute-api.us-east-1.amazonaws.com
+    Description: Domain name del API Gateway (sin protocolo ni stage)
+
+  ApiGatewayStage:
+    Type: String
+    Default: prod
+    Description: Stage del API Gateway que CloudFront va a invocar
+
+Resources:
+
+  # ============================================================
+  # Origin Access Control para que CloudFront acceda al bucket
+  # privadamente sin necesidad de bucket publico
+  # ============================================================
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: sml-frontend-oac
+        Description: OAC para acceso de CloudFront al bucket sml-frontend
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # ============================================================
+  # Cache policy: assets estaticos con cache largo
+  # ============================================================
+  StaticAssetsCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: sml-static-assets-cache
+        Comment: Cache largo para assets estaticos del frontend
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  # ============================================================
+  # Cache policy: API NO debe cachear respuestas dinamicas
+  # ============================================================
+  ApiNoCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: sml-api-no-cache
+        Comment: No cachear respuestas del API Gateway
+        DefaultTTL: 0
+        MaxTTL: 0
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: false
+          EnableAcceptEncodingBrotli: false
+          CookiesConfig:
+            CookieBehavior: all
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              - Authorization
+              - Content-Type
+          QueryStringsConfig:
+            QueryStringBehavior: all
+
+  # ============================================================
+  # Distribution con 2 origins
+  # ============================================================
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: SmartMedia Labs - puerta de entrada unica del sistema
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+
+        Origins:
+          # Origin 1: S3 bucket con el frontend estatico
+          - Id: S3FrontendOrigin
+            DomainName: !Ref FrontendBucketDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+
+          # Origin 2: API Gateway
+          - Id: ApiGatewayOrigin
+            DomainName: !Ref ApiGatewayDomainName
+            OriginPath: !Sub '/${ApiGatewayStage}'
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+
+        # Default behavior: todo lo que no matchea -> S3 frontend
+        DefaultCacheBehavior:
+          TargetOriginId: S3FrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: !Ref StaticAssetsCachePolicy
+          Compress: true
+
+        # Behavior especial: /api/* -> API Gateway (sin cache)
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: ApiGatewayOrigin
+            ViewerProtocolPolicy: https-only
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachePolicyId: !Ref ApiNoCachePolicy
+            Compress: true
+
+        # Default error responses para SPAs
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+Outputs:
+  DistributionId:
+    Description: ID de la distribucion CloudFront
+    Value: !Ref Distribution
+    Export:
+      Name: SmlCloudFrontId
+
+  DistributionDomainName:
+    Description: Domain name de CloudFront (URL publica del sistema)
+    Value: !GetAtt Distribution.DomainName
+    Export:
+      Name: SmlCloudFrontDomain
+
+  DistributionUrl:
+    Description: URL completa con https
+    Value: !Sub 'https://${Distribution.DomainName}'
