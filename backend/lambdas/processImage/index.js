@@ -66,20 +66,21 @@ try {
   const outputUrl =
     `https://${OUTPUT_BUCKET}.s3.us-east-1.amazonaws.com/${outputKey}`;
 
-  await dynamo.send(
-    new PutCommand({
-      TableName: DYNAMODB_TABLE,
-      Item: {
-        imageId,
-        fileName: key.split('/').pop(),
-        originalSize,
-        processedSize,
-        status: 'COMPLETED',
-        outputUrl,
-        processedAt: new Date().toISOString()
-      }
-    })
-  );
+ await dynamo.send(
+  new PutCommand({
+    TableName: DYNAMODB_TABLE,
+    Item: {
+      imageId,
+      fileName: key.split('/').pop(),
+      originalSize,
+      processedSize,
+      status: 'COMPLETED',
+      outputUrl,
+      createdAt: new Date().toISOString(),
+      processedAt: new Date().toISOString()
+    }
+  })
+);
 
   const compressionRatio =
     Math.round(
