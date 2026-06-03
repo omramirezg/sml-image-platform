@@ -108,16 +108,17 @@ try {
   console.error(error);
 
   await dynamo.send(
-    new PutCommand({
-      TableName: DYNAMODB_TABLE,
-      Item: {
-        imageId,
-        status: 'FAILED',
-        error: error.message,
-        processedAt: new Date().toISOString()
-      }
-    })
-  );
+  new PutCommand({
+    TableName: DYNAMODB_TABLE,
+    Item: {
+      imageId,
+      status: 'FAILED',
+      error: error.message,
+      createdAt: new Date().toISOString(),
+      processedAt: new Date().toISOString()
+    }
+  })
+);
 }
 }
 return { statusCode: 200, body: 'Evento procesado' };
