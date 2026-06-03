@@ -28,10 +28,96 @@ const bucket = record.s3.bucket.name;
 const key = decodeURIComponent(record.s3.object.key.replace(/[+]/g, " "));
 const imageId = key.split("/")[1]?.split("-")[0] || key;
 console.log(`Procesando: ${key} del bucket ${bucket}`);
-// TODO semana 2: implementar compresion con sharp
-// TODO semana 2: guardar resultado en sml-images-output
-// TODO semana 2: registrar metadatos en DynamoDB
-// TODO semana 2: publicar notificacion en SNS
+try {
+
+  const originalObject = await s3.send(
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key
+    })
+  );
+
+  const originalBuffer = await streamToBuffer(
+    originalObject.Body
+  );
+
+  const originalSize = originalBuffer.length;
+
+  const optimizedBuffer = await sharp(originalBuffer)
+    .jpeg({
+      quality: 70,
+      mozjpeg: true
+    })
+    .toBuffer();
+
+  const processedSize = optimizedBuffer.length;
+
+  const outputKey = `${imageId}.jpg`;
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: OUTPUT_BUCKET,
+      Key: outputKey,
+      Body: optimizedBuffer,
+      ContentType: 'image/jpeg'
+    })
+  );
+
+  const outputUrl =
+    `https://${OUTPUT_BUCKET}.s3.us-east-1.amazonaws.com/${outputKey}`;
+
+  await dynamo.send(
+    new PutCommand({
+      TableName: DYNAMODB_TABLE,
+      Item: {
+        imageId,
+        fileName: key.split('/').pop(),
+        originalSize,
+        processedSize,
+        status: 'COMPLETED',
+        outputUrl,
+        processedAt: new Date().toISOString()
+      }
+    })
+  );
+
+  const compressionRatio =
+    Math.round(
+      (1 - processedSize / originalSize) * 100
+    );
+
+  await sns.send(
+    new PublishCommand({
+      TopicArn: SNS_TOPIC_ARN,
+      Subject: 'Imagen procesada',
+      Message: JSON.stringify({
+        imageId,
+        outputUrl,
+        originalSize,
+        processedSize,
+        compressionRatio: `${compressionRatio}%`
+      })
+    })
+  );
+
+  console.log(`Imagen ${imageId} procesada`);
+
+} catch (error) {
+
+  console.error(error);
+
+  await dynamo.send(
+    new PutCommand({
+      TableName: DYNAMODB_TABLE,
+      Item: {
+        imageId,
+        status: 'FAILED',
+        error: error.message,
+        processedAt: new Date().toISOString()
+      }
+    })
+  );
+}
 }
 return { statusCode: 200, body: 'Evento procesado' };
 };
