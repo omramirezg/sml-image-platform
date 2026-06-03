@@ -7,6 +7,19 @@ const REGION = process.env.REGION || 'us-east-1';
 const s3 = new S3Client({ region: REGION });
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 const sns = new SNSClient({ region: REGION });
+const OUTPUT_BUCKET = 'sml-images-output';
+const DYNAMODB_TABLE = 'sml-image-metadata';
+const SNS_TOPIC_ARN =
+  'arn:aws:sns:us-east-1:372123585270:sml-image-notifications';
+const streamToBuffer = async (stream) => {
+  const chunks = [];
+
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks);
+};
 // Handler: se dispara automaticamente cuando llega una imagen a sml-images-input
 exports.handler = async (event) => {
 console.log("Evento S3 recibido:", JSON.stringify(event, null, 2));
