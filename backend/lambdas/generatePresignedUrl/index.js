@@ -1,8 +1,15 @@
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBDocumentClient, PutCommand } = require('@aws-sdk/lib-dynamodb');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
 // Cliente S3 — usa la region de la variable de entorno
 const s3 = new S3Client({ region: process.env.REGION || 'us-east-1' });
+const dynamo = DynamoDBDocumentClient.from(
+  new DynamoDBClient({
+    region: process.env.REGION || 'us-east-1'
+  })
+);
 // Handler: funcion principal que ejecuta AWS Lambda
 exports.handler = async (event) => {
 // Leer el body del request (viene como string, hay que parsearlo)
@@ -26,6 +33,17 @@ Key: key,
 ContentType: fileType,
 });
 // Generar la URL firmada (valida por 5 minutos)
+await dynamo.send(
+  new PutCommand({
+    TableName: 'sml-image-metadata',
+    Item: {
+      imageId,
+      fileName,
+      status: 'PENDING',
+      createdAt: new Date().toISOString()
+    }
+  })
+);
 const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
 return {
 statusCode: 200,
