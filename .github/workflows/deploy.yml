@@ -349,3 +349,29 @@ jobs:
             --region "${{ env.AWS_REGION }}"
           echo "Frontend sincronizado en s3://${{ env.S3_FRONTEND }}/"
 
+      - name: Mostrar URL del sitio
+        run: |
+          # CloudFront es global, no requiere --region
+          CF_DOMAIN=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(Origins.Items[0].DomainName,'${{ env.S3_FRONTEND }}')].DomainName" \
+            --output text 2>/dev/null | head -1)
+
+          if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
+            SITE_URL="https://$CF_DOMAIN"
+          else
+            SITE_URL="http://${{ env.S3_FRONTEND }}.s3-website-${{ env.AWS_REGION }}.amazonaws.com"
+          fi
+
+          echo "========================================"
+          echo "  SITIO: $SITE_URL"
+          echo "  API:   ${{ steps.get-api-url.outputs.api_url }}"
+          echo "========================================"
+
+          {
+            echo "## Deploy completado"
+            echo "| | URL |"
+            echo "|---|---|"
+            echo "| Frontend | $SITE_URL |"
+            echo "| API Gateway | ${{ steps.get-api-url.outputs.api_url }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
