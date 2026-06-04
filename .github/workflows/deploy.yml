@@ -38,14 +38,20 @@ jobs:
       fail-fast: false
       matrix:
         lambda:
-          # name  → nombre de la función en AWS
-          # path  → directorio en el repositorio
+          # name    → nombre de la función en AWS
+          # path    → directorio en el repositorio
+          # timeout → segundos máximos de ejecución
+          # memory  → MB (el CPU escala proporcionalmente)
           - name: sml-generate-presigned-url
             path: backend/lambdas/generatePresignedUrl
             handler: index.handler
+            timeout: 15
+            memory: 256
           - name: sml-process-image
             path: backend/lambdas/processImage
             handler: index.handler
+            timeout: 60
+            memory: 512
 
     steps:
       - name: Checkout
@@ -125,6 +131,8 @@ jobs:
               --role          "${{ env.LAMBDA_ROLE_ARN }}" \
               --handler       "$HANDLER" \
               --zip-file      fileb://function.zip \
+              --timeout       ${{ matrix.lambda.timeout }} \
+              --memory-size   ${{ matrix.lambda.memory }} \
               --region        "${{ env.AWS_REGION }}"
 
             aws lambda wait function-active \
@@ -133,6 +141,19 @@ jobs:
 
           fi
           echo "Lambda $FUNCTION_NAME desplegada."
+
+      - name: Aplicar timeout y memoria
+        if: steps.check-dir.outputs.exists == 'true'
+        run: |
+          aws lambda update-function-configuration \
+            --function-name "${{ matrix.lambda.name }}" \
+            --timeout       ${{ matrix.lambda.timeout }} \
+            --memory-size   ${{ matrix.lambda.memory }} \
+            --region        "${{ env.AWS_REGION }}"
+          aws lambda wait function-updated \
+            --function-name "${{ matrix.lambda.name }}" \
+            --region        "${{ env.AWS_REGION }}"
+          echo "Config: timeout=${{ matrix.lambda.timeout }}s, memory=${{ matrix.lambda.memory }}MB"
 
   # ═══════════════════════════════════════════════════════════
   # JOB 2 — CloudFormation: API Gateway

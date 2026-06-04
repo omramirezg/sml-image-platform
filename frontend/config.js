@@ -12,5 +12,5 @@ window.CONFIG = {
   OUTPUT_BUCKET_URL: "https://sml-images-output.s3.us-east-1.amazonaws.com",
 
   POLL_INTERVAL_MS: 2000,
-  POLL_TIMEOUT_MS: 60000
+  POLL_TIMEOUT_MS: 120000
 };
