@@ -247,7 +247,7 @@ jobs:
             --cors-configuration '{
               "CORSRules": [{
                 "AllowedHeaders": ["*"],
-                "AllowedMethods": ["GET"],
+                "AllowedMethods": ["GET", "HEAD"],
                 "AllowedOrigins": ["*"],
                 "ExposeHeaders": ["Content-Length", "Content-Type"],
                 "MaxAgeSeconds": 3000
