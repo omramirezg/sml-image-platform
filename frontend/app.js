@@ -28,6 +28,7 @@
   const savings         = $("savings");
   const savingsValue    = $("savingsValue");
   const downloadBtn     = $("downloadBtn");
+  const cancelBtn       = $("cancelBtn");
   const newUploadBtn    = $("newUploadBtn");
   const historyGrid     = $("historyGrid");
   const historyEmpty    = $("historyEmpty");
@@ -147,10 +148,11 @@
     const url = buildOutputUrl(imageId);
     const start = Date.now();
     while (Date.now() - start < CFG.POLL_TIMEOUT_MS) {
+      if (cancelRequested) throw new Error("__cancelled__");
       if (await imageExists(url)) return url;
       await sleep(CFG.POLL_INTERVAL_MS);
     }
-    throw new Error("Timeout waiting for the processed image");
+    throw new Error("La imagen tardó demasiado en procesarse. Intenta de nuevo.");
   }
 
   // ---------- Demo: simulate processing in the browser ----------
@@ -269,6 +271,7 @@
 
   // ---------- Main flow ----------
   let isBusy = false;
+  let cancelRequested = false;
 
   async function handleFile(file) {
     if (isBusy) return;
@@ -282,8 +285,11 @@
     }
 
     isBusy = true;
+    cancelRequested = false;
     resetResultCard();
     resultCard.classList.remove("hidden");
+    cancelBtn.classList.remove("hidden");
+    newUploadBtn.classList.add("hidden");
     showOriginal(file);
     resultCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
@@ -298,11 +304,10 @@
       let processedUrl, sizeAfter;
 
       if (CFG.DEMO_MODE) {
-        // Simulate the lambda by compressing in the browser
         const blob = await compressInBrowser(file);
         processedUrl = URL.createObjectURL(blob);
         sizeAfter = blob.size;
-        await sleep(900); // drama
+        await sleep(900);
         pushDemoHistory({
           imageId,
           originalName: file.name,
@@ -331,10 +336,17 @@
       showProcessed(processedUrl, sizeAfter, file.size);
       toast("Imagen optimizada.", "success");
     } catch (err) {
-      console.error(err);
-      showError(err.message || "Algo salió mal.");
+      if (cancelRequested) {
+        resetResultCard();
+      } else {
+        console.error(err);
+        showError(err.message || "Algo salió mal.");
+      }
     } finally {
       isBusy = false;
+      cancelRequested = false;
+      cancelBtn.classList.add("hidden");
+      newUploadBtn.classList.remove("hidden");
     }
   }
 
@@ -463,6 +475,9 @@
     fileInput.click();
   });
   refreshHistoryBtn.addEventListener("click", refreshHistory);
+  cancelBtn.addEventListener("click", () => {
+    if (isBusy) cancelRequested = true;
+  });
 
   // ---------- Init ----------
   if (CFG.DEMO_MODE) {
