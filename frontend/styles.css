@@ -296,6 +296,7 @@ main {
   transition: color 0.15s ease;
 }
 .link-btn:hover { color: var(--accent); }
+.section-actions { display: flex; gap: 4px; }
 
 /* ---------- History ---------- */
 .section-header {
