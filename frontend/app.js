@@ -33,6 +33,7 @@
   const historyGrid     = $("historyGrid");
   const historyEmpty    = $("historyEmpty");
   const refreshHistoryBtn = $("refreshHistoryBtn");
+  const clearHistoryBtn   = $("clearHistoryBtn");
   const connStatus      = $("connStatus");
   const toastStack      = $("toastStack");
 
@@ -481,6 +482,12 @@
     fileInput.click();
   });
   refreshHistoryBtn.addEventListener("click", refreshHistory);
+  clearHistoryBtn.addEventListener("click", () => {
+    const key = CFG.DEMO_MODE ? DEMO_KEY : REAL_KEY;
+    localStorage.removeItem(key);
+    renderHistory([]);
+    toast("Historial limpiado.", "info");
+  });
   cancelBtn.addEventListener("click", () => {
     if (isBusy) cancelRequested = true;
   });
