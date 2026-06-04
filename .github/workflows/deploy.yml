@@ -1,93 +1,56 @@
 name: Deploy — SmartMedia Labs
 
-# ─────────────────────────────────────────────────────────────
-# Disparadores:
-#   - Push a main (deploy automático)
-#   - workflow_dispatch (deploy manual desde GitHub UI)
-# ─────────────────────────────────────────────────────────────
 on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
   workflow_dispatch:
 
-# ─────────────────────────────────────────────────────────────
-# Variables de entorno globales
-# ─────────────────────────────────────────────────────────────
+# Evita deploys paralelos: espera a que el actual termine antes de iniciar el siguiente.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
-  AWS_REGION:       us-east-1
-  LAMBDA_ROLE_ARN:  arn:aws:iam::372123585270:role/sml-lambda-execution-role
-  LAMBDA_RUNTIME:   nodejs18.x
-  S3_INPUT:         sml-images-input
-  S3_FRONTEND:      sml-frontend
-  CFN_STACK:        sml-api
-  CFN_TEMPLATE:     backend/infra/api-gateway.yaml
+  AWS_REGION:      us-east-1
+  LAMBDA_ROLE_ARN: arn:aws:iam::372123585270:role/sml-lambda-execution-role
+  LAMBDA_RUNTIME:  nodejs18.x
+  S3_INPUT:        sml-images-input
+  S3_FRONTEND:     sml-frontend
+  CFN_STACK:       sml-api
+  CFN_TEMPLATE:    backend/infra/api-gateway.yaml
 
 jobs:
 
   # ═══════════════════════════════════════════════════════════
-  # JOB 1 — CloudFormation: API Gateway
-  # ═══════════════════════════════════════════════════════════
-  deploy-infra:
-    name: "Infra · CloudFormation (API Gateway)"
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configurar credenciales AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
-
-      - name: Desplegar stack CloudFormation
-        run: |
-          aws cloudformation deploy \
-            --template-file ${{ env.CFN_TEMPLATE }} \
-            --stack-name     ${{ env.CFN_STACK }} \
-            --region         ${{ env.AWS_REGION }} \
-            --no-fail-on-empty-changeset
-          echo "Stack desplegado correctamente."
-
-      - name: Mostrar outputs del stack
-        run: |
-          aws cloudformation describe-stacks \
-            --stack-name ${{ env.CFN_STACK }} \
-            --query "Stacks[0].Outputs" \
-            --output table \
-            --region ${{ env.AWS_REGION }}
-
-  # ═══════════════════════════════════════════════════════════
-  # JOB 2 — Lambda Functions (matrix por función)
+  # JOB 1 — Lambda Functions
+  # Debe ejecutarse ANTES que deploy-infra para que las funciones
+  # existan cuando CloudFormation asigne los permisos de invocación.
   # ═══════════════════════════════════════════════════════════
   deploy-lambdas:
     name: "Lambda · ${{ matrix.lambda.name }}"
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: false          # Si una Lambda falla, las otras continúan
+      fail-fast: false
       matrix:
         lambda:
+          # name  → nombre de la función en AWS
+          # path  → directorio en el repositorio
           - name: sml-generate-presigned-url
-            path: backend/lambdas/sml-generate-presigned-url
+            path: backend/lambdas/generatePresignedUrl
             handler: index.handler
           - name: sml-process-image
-            path: backend/lambdas/sml-process-image
-            handler: index.handler
-          - name: sml-get-history
-            path: backend/lambdas/sml-get-history
+            path: backend/lambdas/processImage
             handler: index.handler
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── Verificar si el directorio de la Lambda existe ────
-      # Si aún no creó el código, el job emite un
-      # warning y se omite en lugar de fallar el pipeline.
       - name: Verificar existencia del directorio
         id: check-dir
         run: |
@@ -114,13 +77,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      # ── Instalar solo dependencias de producción ──────────
       - name: Instalar dependencias (prod)
         if: steps.check-dir.outputs.exists == 'true'
         working-directory: ${{ matrix.lambda.path }}
         run: npm ci --omit=dev
 
-      # ── Empaquetar: excluir archivos innecesarios ─────────
       - name: Empaquetar ZIP
         if: steps.check-dir.outputs.exists == 'true'
         working-directory: ${{ matrix.lambda.path }}
@@ -128,14 +89,10 @@ jobs:
           zip -r function.zip . \
             --exclude "*.test.js" \
             --exclude "*.spec.js" \
-            --exclude "*.test.ts" \
-            --exclude "*.spec.ts" \
             --exclude ".env*" \
-            --exclude "__tests__/*" \
             --exclude "coverage/*"
           echo "Tamaño del ZIP: $(du -sh function.zip | cut -f1)"
 
-      # ── Crear o actualizar la función Lambda ──────────────
       - name: Crear o actualizar Lambda
         if: steps.check-dir.outputs.exists == 'true'
         working-directory: ${{ matrix.lambda.path }}
@@ -145,24 +102,23 @@ jobs:
 
           if aws lambda get-function \
                --function-name "$FUNCTION_NAME" \
-               --region "${{ env.AWS_REGION }}" \
-               --query "Configuration.FunctionName" \
-               --output text 2>/dev/null; then
+               --region        "${{ env.AWS_REGION }}" \
+               --query         "Configuration.FunctionName" \
+               --output        text 2>/dev/null; then
 
-            echo ">>> Función existente — actualizando código..."
+            echo ">>> Actualizando código de $FUNCTION_NAME..."
             aws lambda update-function-code \
               --function-name "$FUNCTION_NAME" \
-              --zip-file fileb://function.zip \
-              --region "${{ env.AWS_REGION }}"
+              --zip-file      fileb://function.zip \
+              --region        "${{ env.AWS_REGION }}"
 
-            # Esperar a que el update sea efectivo antes de continuar
             aws lambda wait function-updated \
               --function-name "$FUNCTION_NAME" \
-              --region "${{ env.AWS_REGION }}"
+              --region        "${{ env.AWS_REGION }}"
 
           else
 
-            echo ">>> Función no existe — creando..."
+            echo ">>> Creando función $FUNCTION_NAME..."
             aws lambda create-function \
               --function-name "$FUNCTION_NAME" \
               --runtime       "${{ env.LAMBDA_RUNTIME }}" \
@@ -173,16 +129,107 @@ jobs:
 
             aws lambda wait function-active \
               --function-name "$FUNCTION_NAME" \
-              --region "${{ env.AWS_REGION }}"
+              --region        "${{ env.AWS_REGION }}"
 
           fi
+          echo "Lambda $FUNCTION_NAME desplegada."
 
-          echo "Lambda $FUNCTION_NAME desplegada correctamente."
+  # ═══════════════════════════════════════════════════════════
+  # JOB 2 — CloudFormation: API Gateway
+  # Necesita las Lambdas activas para poder otorgarles permisos
+  # de invocación desde API Gateway.
+  # ═══════════════════════════════════════════════════════════
+  deploy-infra:
+    name: "Infra · CloudFormation (API Gateway)"
+    runs-on: ubuntu-latest
+    needs: deploy-lambdas
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Desplegar stack CloudFormation
+        run: |
+          aws cloudformation deploy \
+            --template-file ${{ env.CFN_TEMPLATE }} \
+            --stack-name    ${{ env.CFN_STACK }} \
+            --region        ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset
+          echo "Stack ${{ env.CFN_STACK }} desplegado."
+
+      # CloudFormation no redesploya el stage automáticamente al cambiar integraciones.
+      # Este paso fuerza un nuevo deployment apuntando al stage prod.
+      - name: Forzar redespliegue del stage prod
+        run: |
+          API_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${{ env.CFN_STACK }}" \
+            --query      "Stacks[0].Outputs[?OutputKey=='ApiId'].OutputValue" \
+            --output     text \
+            --region     "${{ env.AWS_REGION }}")
+
+          aws apigateway create-deployment \
+            --rest-api-id "$API_ID" \
+            --stage-name  prod \
+            --description "ci-${{ github.sha }}" \
+            --region      "${{ env.AWS_REGION }}"
+
+          echo "Stage prod actualizado (commit ${{ github.sha }})."
+
+      # Otorga permiso a API Gateway para invocar cada Lambda.
+      # El operador || evita fallo si el permiso ya existe (idempotente).
+      - name: Otorgar permisos API Gateway → Lambdas
+        run: |
+          API_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${{ env.CFN_STACK }}" \
+            --query      "Stacks[0].Outputs[?OutputKey=='ApiId'].OutputValue" \
+            --output     text \
+            --region     "${{ env.AWS_REGION }}")
+
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+          grant_permission() {
+            local FUNCTION=$1
+            local STATEMENT=$2
+            local SOURCE_ARN=$3
+
+            if aws lambda get-function --function-name "$FUNCTION" \
+                 --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
+              aws lambda add-permission \
+                --function-name "$FUNCTION" \
+                --statement-id  "$STATEMENT" \
+                --action        lambda:InvokeFunction \
+                --principal     apigateway.amazonaws.com \
+                --source-arn    "$SOURCE_ARN" \
+                --region        "${{ env.AWS_REGION }}" 2>/dev/null \
+              && echo "Permiso $STATEMENT agregado." \
+              || echo "Permiso $STATEMENT ya existía."
+            else
+              echo "::warning::Función $FUNCTION no encontrada, permiso $STATEMENT omitido."
+            fi
+          }
+
+          BASE_ARN="arn:aws:execute-api:${{ env.AWS_REGION }}:${ACCOUNT_ID}:${API_ID}"
+
+          grant_permission "sml-generate-presigned-url" "apigw-upload" "${BASE_ARN}/*/POST/upload"
+
+      - name: Mostrar outputs del stack
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ env.CFN_STACK }}" \
+            --query      "Stacks[0].Outputs" \
+            --output     table \
+            --region     "${{ env.AWS_REGION }}"
 
   # ═══════════════════════════════════════════════════════════
   # JOB 3 — Trigger S3 → sml-process-image
-  # Se ejecuta después del deploy de las Lambdas.
-  # Es idempotente: puede correr múltiples veces sin error.
+  # Corre en paralelo con deploy-infra (ambos dependen de deploy-lambdas).
   # ═══════════════════════════════════════════════════════════
   configure-s3-trigger:
     name: "Trigger · S3 → sml-process-image"
@@ -197,13 +244,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      # ── Verificar que la Lambda existe antes de configurar ─
       - name: Verificar que sml-process-image existe
         id: check-lambda
         run: |
           if aws lambda get-function \
                --function-name sml-process-image \
-               --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+               --region        "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -216,26 +262,24 @@ jobs:
         run: |
           LAMBDA_ARN=$(aws lambda get-function \
             --function-name sml-process-image \
-            --query "Configuration.FunctionArn" \
-            --output text \
-            --region "${{ env.AWS_REGION }}")
+            --query         "Configuration.FunctionArn" \
+            --output        text \
+            --region        "${{ env.AWS_REGION }}")
           echo "lambda_arn=$LAMBDA_ARN" >> $GITHUB_OUTPUT
           echo "ARN: $LAMBDA_ARN"
 
-      # ── El permiso add-permission falla si ya existe; se ignora ─
       - name: Agregar permiso de invocación desde S3
         if: steps.check-lambda.outputs.exists == 'true'
         run: |
           aws lambda add-permission \
-            --function-name  sml-process-image \
-            --statement-id   s3-invoke-permission \
-            --action         lambda:InvokeFunction \
-            --principal      s3.amazonaws.com \
-            --source-arn     "arn:aws:s3:::${{ env.S3_INPUT }}" \
-            --region         "${{ env.AWS_REGION }}" \
-          2>/dev/null \
-          && echo "Permiso agregado." \
-          || echo "Permiso ya existía, continuando."
+            --function-name sml-process-image \
+            --statement-id  s3-invoke-permission \
+            --action        lambda:InvokeFunction \
+            --principal     s3.amazonaws.com \
+            --source-arn    "arn:aws:s3:::${{ env.S3_INPUT }}" \
+            --region        "${{ env.AWS_REGION }}" 2>/dev/null \
+          && echo "Permiso S3 agregado." \
+          || echo "Permiso S3 ya existía, continuando."
 
       - name: Configurar notificación S3 → Lambda
         if: steps.check-lambda.outputs.exists == 'true'
@@ -262,24 +306,17 @@ jobs:
           echo "Trigger S3 → sml-process-image configurado."
 
   # ═══════════════════════════════════════════════════════════
-  # JOB 4 — Frontend: build y sync a S3
-  # Depende de deploy-infra para leer la URL de la API.
+  # JOB 4 — Frontend (vanilla HTML/CSS/JS, sin paso de build)
+  # Depende de deploy-infra para leer la URL de la API del stack.
   # ═══════════════════════════════════════════════════════════
   deploy-frontend:
-    name: "Frontend · Build & Sync → S3"
+    name: "Frontend · Sync → S3"
     runs-on: ubuntu-latest
     needs: deploy-infra
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Configurar Node.js 18
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
 
       - name: Configurar credenciales AWS
         uses: aws-actions/configure-aws-credentials@v4
@@ -288,35 +325,27 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      # ── Leer la URL de la API desde CloudFormation Outputs ─
       - name: Obtener API URL desde CloudFormation
         id: get-api-url
         run: |
           API_URL=$(aws cloudformation describe-stacks \
             --stack-name "${{ env.CFN_STACK }}" \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
-            --output text \
-            --region "${{ env.AWS_REGION }}")
+            --query      "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output     text \
+            --region     "${{ env.AWS_REGION }}")
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
           echo "API URL: $API_URL"
 
-      - name: Instalar dependencias
-        working-directory: frontend
-        run: npm ci
-
-      # ── Build inyectando la URL de la API como variable de entorno
-      # Si el frontend usa Vite → VITE_API_URL
-      # Si usa Create React App → REACT_APP_API_URL
-      # Ajustar el nombre según el bundler.
-      - name: Build frontend
-        working-directory: frontend
-        env:
-          VITE_API_URL: ${{ steps.get-api-url.outputs.api_url }}
-        run: npm run build
-
-      - name: Sync a S3
+      # Reemplaza la URL hardcodeada en config.js con la del stack activo.
+      - name: Inyectar API URL en config.js
         run: |
-          aws s3 sync frontend/dist s3://${{ env.S3_FRONTEND }}/ \
+          sed -i "s|API_URL:.*|API_URL: \"${{ steps.get-api-url.outputs.api_url }}\",|" frontend/config.js
+          grep "API_URL" frontend/config.js
+
+      - name: Sync frontend → S3
+        run: |
+          aws s3 sync frontend/ s3://${{ env.S3_FRONTEND }}/ \
             --delete \
             --region "${{ env.AWS_REGION }}"
-          echo "Frontend desplegado en: http://${{ env.S3_FRONTEND }}.s3-website-us-east-1.amazonaws.com"
+          echo "Frontend sincronizado en s3://${{ env.S3_FRONTEND }}/"
+
