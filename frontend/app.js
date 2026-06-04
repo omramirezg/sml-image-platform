@@ -320,12 +320,18 @@
         renderHistory(await fetchHistory());
       } else {
         processedUrl = await waitForProcessedImage(imageId);
-        sizeAfter = null;
+        try {
+          const head = await fetch(processedUrl, { method: "HEAD", mode: "cors" });
+          const len = head.headers.get("Content-Length");
+          sizeAfter = len ? parseInt(len, 10) : null;
+        } catch {
+          sizeAfter = null;
+        }
         pushRealHistory({
           imageId,
           originalName: file.name,
           sizeBefore: file.size,
-          sizeAfter: null,
+          sizeAfter,
           processedUrl,
           status: "processed",
           createdAt: Date.now()
