@@ -290,16 +290,28 @@ jobs:
             --notification-configuration "{
               \"LambdaFunctionConfigurations\": [
                 {
+                  \"Id\": \"trigger-jpg\",
                   \"LambdaFunctionArn\": \"$LAMBDA_ARN\",
                   \"Events\": [\"s3:ObjectCreated:*\"],
-                  \"Filter\": {
-                    \"Key\": {
-                      \"FilterRules\": [
-                        {\"Name\": \"suffix\", \"Value\": \".jpg\"},
-                        {\"Name\": \"prefix\", \"Value\": \"uploads/\"}
-                      ]
-                    }
-                  }
+                  \"Filter\": {\"Key\": {\"FilterRules\": [{\"Name\": \"prefix\", \"Value\": \"uploads/\"}, {\"Name\": \"suffix\", \"Value\": \".jpg\"}]}}
+                },
+                {
+                  \"Id\": \"trigger-jpeg\",
+                  \"LambdaFunctionArn\": \"$LAMBDA_ARN\",
+                  \"Events\": [\"s3:ObjectCreated:*\"],
+                  \"Filter\": {\"Key\": {\"FilterRules\": [{\"Name\": \"prefix\", \"Value\": \"uploads/\"}, {\"Name\": \"suffix\", \"Value\": \".jpeg\"}]}}
+                },
+                {
+                  \"Id\": \"trigger-png\",
+                  \"LambdaFunctionArn\": \"$LAMBDA_ARN\",
+                  \"Events\": [\"s3:ObjectCreated:*\"],
+                  \"Filter\": {\"Key\": {\"FilterRules\": [{\"Name\": \"prefix\", \"Value\": \"uploads/\"}, {\"Name\": \"suffix\", \"Value\": \".png\"}]}}
+                },
+                {
+                  \"Id\": \"trigger-webp\",
+                  \"LambdaFunctionArn\": \"$LAMBDA_ARN\",
+                  \"Events\": [\"s3:ObjectCreated:*\"],
+                  \"Filter\": {\"Key\": {\"FilterRules\": [{\"Name\": \"prefix\", \"Value\": \"uploads/\"}, {\"Name\": \"suffix\", \"Value\": \".webp\"}]}}
                 }
               ]
             }"

@@ -26,7 +26,7 @@ console.log("Evento S3 recibido:", JSON.stringify(event, null, 2));
 for (const record of event.Records) {
 const bucket = record.s3.bucket.name;
 const key = decodeURIComponent(record.s3.object.key.replace(/[+]/g, " "));
-const imageId = key.split("/")[1]?.split("-")[0] || key;
+const imageId = key.replace(/^uploads\//, "").substring(0, 36);
 console.log(`Procesando: ${key} del bucket ${bucket}`);
 try {
 
