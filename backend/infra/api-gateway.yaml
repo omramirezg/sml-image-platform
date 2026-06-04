@@ -1,32 +1,20 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: SmartMedia Labs - API Gateway con 3 endpoints (mock integrations)
-
-# ============================================================
-# Este template crea la API Gateway base del proyecto.
-# Las integraciones son MOCK (devuelven respuestas falsas).
-# Cuando Juan Pablo tenga sus Lambdas, las integraciones
-# Mock se reemplazan por Lambda integrations.
-# ============================================================
+Description: SmartMedia Labs - API Gateway REST con integraciones Lambda (AWS_PROXY)
 
 Resources:
 
-  # ============================================================
-  # 1. REST API (el container principal)
-  # ============================================================
+  # ── 1. REST API ──────────────────────────────────────────────
   SmlApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: sml-api
-      Description: API REST de SmartMedia Labs para upload y consulta de imagenes
+      Description: API REST de SmartMedia Labs para upload y consulta de imágenes
       EndpointConfiguration:
         Types:
           - REGIONAL
 
-  # ============================================================
-  # 2. Resources (las rutas /upload, /history, /status, /status/{id})
-  # ============================================================
+  # ── 2. Recursos (rutas) ──────────────────────────────────────
 
-  # /upload
   UploadResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -34,7 +22,6 @@ Resources:
       ParentId: !GetAtt SmlApi.RootResourceId
       PathPart: upload
 
-  # /history
   HistoryResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -42,7 +29,6 @@ Resources:
       ParentId: !GetAtt SmlApi.RootResourceId
       PathPart: history
 
-  # /status (padre del recurso con parametro)
   StatusResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -50,7 +36,6 @@ Resources:
       ParentId: !GetAtt SmlApi.RootResourceId
       PathPart: status
 
-  # /status/{id}
   StatusIdResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -58,9 +43,8 @@ Resources:
       ParentId: !Ref StatusResource
       PathPart: '{id}'
 
-  # ============================================================
-  # 3. Methods - POST /upload (con MOCK integration)
-  # ============================================================
+  # ── 3. POST /upload → sml-generate-presigned-url ────────────
+
   UploadPostMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -69,25 +53,12 @@ Resources:
       HttpMethod: POST
       AuthorizationType: NONE
       Integration:
-        Type: MOCK
-        RequestTemplates:
-          application/json: '{"statusCode": 200}'
-        IntegrationResponses:
-          - StatusCode: 200
-            ResponseParameters:
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-            ResponseTemplates:
-              application/json: |
-                {
-                  "uploadUrl": "https://example.com/mock-presigned-url-replace-when-lambda-ready",
-                  "imageId": "mock-uuid-replace-when-lambda-ready"
-                }
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/\
+          arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:sml-generate-presigned-url/invocations"
 
-  # OPTIONS /upload (CORS preflight)
   UploadOptionsMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -112,9 +83,8 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Headers: true
 
-  # ============================================================
-  # 4. Methods - GET /history (con MOCK integration)
-  # ============================================================
+  # ── 4. GET /history (pendiente de implementación) ───────────
+
   HistoryGetMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -131,17 +101,12 @@ Resources:
             ResponseParameters:
               method.response.header.Access-Control-Allow-Origin: "'*'"
             ResponseTemplates:
-              application/json: |
-                {
-                  "images": [],
-                  "note": "MOCK response - se reemplaza cuando Juan Pablo despliegue la Lambda"
-                }
+              application/json: '{"images": [], "message": "History endpoint not yet implemented"}'
       MethodResponses:
         - StatusCode: 200
           ResponseParameters:
             method.response.header.Access-Control-Allow-Origin: true
 
-  # OPTIONS /history (CORS preflight)
   HistoryOptionsMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -166,9 +131,8 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Headers: true
 
-  # ============================================================
-  # 5. Methods - GET /status/{id} (con MOCK integration)
-  # ============================================================
+  # ── 5. GET /status/{id} (pendiente de implementación) ───────
+
   StatusIdGetMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -187,19 +151,12 @@ Resources:
             ResponseParameters:
               method.response.header.Access-Control-Allow-Origin: "'*'"
             ResponseTemplates:
-              application/json: |
-                {
-                  "imageId": "$input.params('id')",
-                  "status": "MOCK_PENDING",
-                  "outputUrl": null,
-                  "note": "MOCK response - se reemplaza cuando Juan Pablo despliegue la Lambda"
-                }
+              application/json: '{"status": "NOT_IMPLEMENTED", "message": "Status endpoint not yet implemented"}'
       MethodResponses:
         - StatusCode: 200
           ResponseParameters:
             method.response.header.Access-Control-Allow-Origin: true
 
-  # OPTIONS /status/{id} (CORS preflight)
   StatusIdOptionsMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -224,9 +181,11 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Headers: true
 
-  # ============================================================
-  # 6. Deployment + Stage (publica la API en una URL)
-  # ============================================================
+  # ── 6. Deployment + Stage ────────────────────────────────────
+  # Nota: CloudFormation no redesploya el stage automáticamente al cambiar
+  # integraciones. El pipeline fuerza un nuevo deployment vía CLI después
+  # de este stack (paso "Forzar redespliegue del stage prod" en deploy-infra).
+
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
@@ -238,7 +197,6 @@ Resources:
       - StatusIdOptionsMethod
     Properties:
       RestApiId: !Ref SmlApi
-      Description: Initial deployment with mock integrations
 
   ApiStage:
     Type: AWS::ApiGateway::Stage
@@ -248,10 +206,9 @@ Resources:
       StageName: prod
       Description: Production stage
 
-# ============================================================
-# Outputs - valores que CloudFormation expone post-deploy
-# ============================================================
+# ── Outputs ──────────────────────────────────────────────────
 Outputs:
+
   ApiId:
     Description: ID de la API Gateway
     Value: !Ref SmlApi
@@ -269,7 +226,7 @@ Outputs:
     Value: !Sub 'https://${SmlApi}.execute-api.${AWS::Region}.amazonaws.com/prod/upload'
 
   HistoryEndpoint:
-    Description: Endpoint para listar historial de imagenes
+    Description: Endpoint para listar historial de imágenes
     Value: !Sub 'https://${SmlApi}.execute-api.${AWS::Region}.amazonaws.com/prod/history'
 
   StatusEndpoint:

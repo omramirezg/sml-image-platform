@@ -1,9 +1,6 @@
 # Infraestructura AWS — SmartMedia Labs
 
 Documento de referencia de los recursos AWS desplegados para el proyecto.
-Última actualización: 2026-05-10.
-
-Estado actual: infraestructura base desplegada. Pendiente: trigger S3 → Lambda 2 (se configura cuando Lambda 2 exista).
 
 ---
 
@@ -13,22 +10,19 @@ Estado actual: infraestructura base desplegada. Pendiente: trigger S3 → Lambda
 |---|---|
 | Account ID | `372123585270` |
 | Región | `us-east-1` (N. Virginia) |
-| Owner | Omar Ramírez (omaruzgonzalez@gmail.com) |
 
-Todos los recursos del proyecto se despliegan en `us-east-1`. Cualquier recurso creado en otra región no podrá ser referenciado por el resto del stack.
+Todos los recursos del proyecto se despliegan en `us-east-1`.
 
 ---
 
 ## 2. IAM Users
 
-| Username | ARN | Permisos | Asignado a |
+| Username | ARN | Permisos | Uso |
 |---|---|---|---|
-| `sml-omar-dev` | `arn:aws:iam::372123585270:user/sml-omar-dev` | `AdministratorAccess` | Omar (infra) |
-| `sml-juanpablo-dev` | `arn:aws:iam::372123585270:user/sml-juanpablo-dev` | `AdministratorAccess` | Juan Pablo (backend) |
-| `sml-santiago-dev` | `arn:aws:iam::372123585270:user/sml-santiago-dev` | `AmazonS3FullAccess` | Santiago (frontend) |
+| `sml-omar-dev` | `arn:aws:iam::372123585270:user/sml-omar-dev` | `AdministratorAccess` | Infraestructura |
+| `sml-juanpablo-dev` | `arn:aws:iam::372123585270:user/sml-juanpablo-dev` | `AdministratorAccess` | Backend |
+| `sml-santiago-dev` | `arn:aws:iam::372123585270:user/sml-santiago-dev` | `AmazonS3FullAccess` | Frontend |
 | `sml-cicd-user` | `arn:aws:iam::372123585270:user/sml-cicd-user` | `AdministratorAccess` | GitHub Actions |
-
-Configuración del CLI:
 
 ```bash
 aws configure
@@ -50,18 +44,13 @@ aws sts get-caller-identity
 |---|---|
 | Bucket | `sml-images-input` |
 | ARN | `arn:aws:s3:::sml-images-input` |
-| Región | `us-east-1` |
 | Acceso público | Bloqueado |
 | Versionado | Deshabilitado |
 | CORS | Configurado (PUT/POST/GET) |
 
-Flujo de uso:
+Flujo: el frontend solicita una presigned URL → realiza `PUT` directo al bucket → el upload dispara la Lambda `sml-process-image`.
 
-- El frontend solicita una presigned URL a la Lambda `sml-generate-presigned-url`.
-- El frontend hace `PUT` directo al bucket usando la presigned URL.
-- El upload dispara (cuando exista el trigger) la Lambda `sml-process-image`.
-
-CORS aplicado:
+CORS:
 
 ```json
 [
@@ -75,7 +64,7 @@ CORS aplicado:
 ]
 ```
 
-`AllowedOrigins: ["*"]` se restringirá al dominio del frontend cuando esté deployado.
+> `AllowedOrigins: ["*"]` debe restringirse al dominio CloudFront cuando esté configurado.
 
 ---
 
@@ -85,14 +74,10 @@ CORS aplicado:
 |---|---|
 | Bucket | `sml-images-output` |
 | ARN | `arn:aws:s3:::sml-images-output` |
-| Región | `us-east-1` |
 | Acceso público | Lectura (`s3:GetObject`) |
-| URL pattern | `https://sml-images-output.s3.us-east-1.amazonaws.com/{imageId}.jpg` |
+| URL patrón | `https://sml-images-output.s3.us-east-1.amazonaws.com/{imageId}.jpg` |
 
-Flujo de uso:
-
-- La Lambda `sml-process-image` escribe la imagen procesada.
-- La URL pública se persiste en DynamoDB y se publica al topic SNS.
+La Lambda `sml-process-image` escribe aquí las imágenes optimizadas. La URL pública se persiste en DynamoDB y se publica al topic SNS.
 
 Bucket policy:
 
@@ -119,37 +104,16 @@ Bucket policy:
 |---|---|
 | Bucket | `sml-frontend` |
 | ARN | `arn:aws:s3:::sml-frontend` |
-| Región | `us-east-1` |
-| Acceso público | Lectura |
-| Static website hosting | Habilitado |
-| Index document | `index.html` |
-| Error document | `index.html` |
-| URL pública | `http://sml-frontend.s3-website-us-east-1.amazonaws.com` |
+| Acceso público | Bloqueado (origen privado de CloudFront) |
+| Static website hosting | Deshabilitado |
 
-Bucket policy:
+El bucket es el **origen** de la distribución CloudFront. Los usuarios acceden al sitio únicamente a través de CloudFront, no directamente al bucket.
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowPublicReadOfFrontendAssets",
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::sml-frontend/*"
-    }
-  ]
-}
-```
-
-Comando de deploy del frontend:
+Comando de sync (CI/CD):
 
 ```bash
-aws s3 sync ./frontend/dist s3://sml-frontend/ --delete
+aws s3 sync frontend/ s3://sml-frontend/ --delete
 ```
-
-Este bucket está separado de `sml-images-output`, por lo que el flag `--delete` no afecta imágenes procesadas.
 
 ---
 
@@ -159,22 +123,17 @@ Este bucket está separado de `sml-images-output`, por lo que el flag `--delete`
 
 | Campo | Valor |
 |---|---|
-| Nombre | `sml-image-metadata` |
 | ARN | `arn:aws:dynamodb:us-east-1:372123585270:table/sml-image-metadata` |
-| Estado | `ACTIVE` |
 | Partition key | `imageId` (String) |
-| Sort key | (ninguno) |
 | Billing mode | `PAY_PER_REQUEST` |
-| Table class | `STANDARD` |
-| Encryption | AWS-owned key |
 | Deletion protection | Habilitada |
 
-Esquema sugerido para items:
+Esquema de item:
 
 ```json
 {
   "imageId": "uuid-v4-string",
-  "fileName": "vacaciones.jpg",
+  "fileName": "foto.jpg",
   "originalSize": 4523891,
   "processedSize": 845712,
   "status": "PROCESSED",
@@ -184,20 +143,18 @@ Esquema sugerido para items:
 }
 ```
 
-Estados válidos para `status`: `PENDING`, `PROCESSING`, `PROCESSED`, `FAILED`.
+Estados válidos: `PENDING` → `PROCESSING` → `PROCESSED` / `FAILED`
 
 ---
 
-## 5. SNS Topic
+## 5. SNS
 
 ### Topic `sml-image-notifications`
 
 | Campo | Valor |
 |---|---|
-| Nombre | `sml-image-notifications` |
 | ARN | `arn:aws:sns:us-east-1:372123585270:sml-image-notifications` |
 | Tipo | Standard |
-| Display name | `SmartMedia Labs - Image Processing` |
 
 Suscripciones activas:
 
@@ -205,7 +162,7 @@ Suscripciones activas:
 |---|---|---|
 | EMAIL | `omaruzgonzalez@gmail.com` | Confirmed |
 
-Ejemplo de publicación desde Lambda (Node.js):
+Ejemplo de publicación desde Lambda:
 
 ```javascript
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
@@ -227,113 +184,64 @@ await sns.send(new PublishCommand({
 
 | Campo | Valor |
 |---|---|
-| Nombre | `sml-lambda-execution-role` |
 | ARN | `arn:aws:iam::372123585270:role/sml-lambda-execution-role` |
 | Trusted entity | `lambda.amazonaws.com` |
-| Maximum session duration | 1 hora |
 
-Trust policy:
+Políticas adjuntas:
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["sts:AssumeRole"],
-      "Principal": {
-        "Service": ["lambda.amazonaws.com"]
-      }
-    }
-  ]
-}
-```
-
-Managed policies adjuntas:
-
-| Policy | Para |
+| Policy | Propósito |
 |---|---|
 | `AWSLambdaBasicExecutionRole` | Logs en CloudWatch |
 | `AmazonS3FullAccess` | Acceso a `sml-images-input` y `sml-images-output` |
 | `AmazonDynamoDBFullAccess` | Operaciones sobre `sml-image-metadata` |
 | `AmazonSNSFullAccess` | Publicación al topic `sml-image-notifications` |
 
-Ejemplo de uso al desplegar una Lambda:
-
-```bash
-aws lambda create-function \
-  --function-name sml-process-image \
-  --runtime nodejs18.x \
-  --role arn:aws:iam::372123585270:role/sml-lambda-execution-role \
-  --handler index.handler \
-  --zip-file fileb://function.zip \
-  --region us-east-1
-```
-
 ---
 
-## 7. Recursos pendientes
-
-### 7.1 Trigger S3 → Lambda 2
-
-Se configurará cuando la Lambda `sml-process-image` esté desplegada:
-
-```bash
-aws lambda add-permission \
-  --function-name sml-process-image \
-  --statement-id s3-trigger \
-  --action lambda:InvokeFunction \
-  --principal s3.amazonaws.com \
-  --source-arn arn:aws:s3:::sml-images-input
-
-aws s3api put-bucket-notification-configuration \
-  --bucket sml-images-input \
-  --notification-configuration file://s3-event.json
-```
-
-### 7.2 API Gateway
-
-Desplegada con CloudFormation (template `backend/infra/api-gateway.yaml`, stack `sml-api`).
+## 7. API Gateway
 
 | Campo | Valor |
 |---|---|
 | API ID | `bg7yhanxyg` |
-| Stack name | `sml-api` |
+| Stack CloudFormation | `sml-api` |
 | Stage | `prod` |
 | URL base | `https://bg7yhanxyg.execute-api.us-east-1.amazonaws.com/prod` |
 
-Endpoints disponibles (actualmente con MOCK integrations):
+Endpoints:
 
-| Method | Path | URL completa | Estado |
-|---|---|---|---|
-| POST | `/upload` | `https://bg7yhanxyg.execute-api.us-east-1.amazonaws.com/prod/upload` | MOCK |
-| GET | `/history` | `https://bg7yhanxyg.execute-api.us-east-1.amazonaws.com/prod/history` | MOCK |
-| GET | `/status/{id}` | `https://bg7yhanxyg.execute-api.us-east-1.amazonaws.com/prod/status/{id}` | MOCK |
+| Method | Path | Integración |
+|---|---|---|
+| POST | `/upload` | Lambda `sml-generate-presigned-url` (AWS_PROXY) |
+| GET | `/history` | MOCK (pendiente de implementación) |
+| GET | `/status/{id}` | MOCK (pendiente de implementación) |
 
-CORS preflight (OPTIONS) habilitado en los 3 endpoints.
-
-Para reemplazar MOCK por Lambda integrations, actualizar el template o usar la consola: API Gateway → sml-api → Resources → seleccionar method → Integration Request → cambiar Integration type de Mock a Lambda Function.
-
-Para redeployar después de cambios:
+Para redesplegar después de cambios en el template:
 
 ```bash
 aws cloudformation deploy \
   --template-file backend/infra/api-gateway.yaml \
   --stack-name sml-api \
   --region us-east-1
+
+# Forzar actualización del stage prod
+aws apigateway create-deployment \
+  --rest-api-id bg7yhanxyg \
+  --stage-name prod \
+  --region us-east-1
 ```
-
-### 7.3 Lambda functions
-
-Pendientes de despliegue. Cuando existan, registrar:
-
-- `sml-generate-presigned-url` — ARN
-- `sml-process-image` — ARN
-- `sml-get-history` — ARN
 
 ---
 
-## 8. Comandos de verificación
+## 8. Lambda Functions
+
+| Función | Runtime | Trigger | Directorio |
+|---|---|---|---|
+| `sml-generate-presigned-url` | Node.js 18.x | API Gateway `POST /upload` | `backend/lambdas/generatePresignedUrl/` |
+| `sml-process-image` | Node.js 18.x | S3 `ObjectCreated` en `sml-images-input` | `backend/lambdas/processImage/` |
+
+---
+
+## 9. Comandos de verificación
 
 ```bash
 # Identidad
@@ -343,23 +251,26 @@ aws sts get-caller-identity
 aws s3 ls | grep sml-
 
 # DynamoDB
-aws dynamodb describe-table --table-name sml-image-metadata --query "Table.{Status:TableStatus,ARN:TableArn}"
+aws dynamodb describe-table --table-name sml-image-metadata \
+  --query "Table.{Status:TableStatus,ARN:TableArn}"
 
 # SNS
-aws sns list-topics --query "Topics[?contains(TopicArn,'sml-image-notifications')]"
-aws sns list-subscriptions-by-topic --topic-arn arn:aws:sns:us-east-1:372123585270:sml-image-notifications
+aws sns list-subscriptions-by-topic \
+  --topic-arn arn:aws:sns:us-east-1:372123585270:sml-image-notifications
 
 # IAM Role
-aws iam get-role --role-name sml-lambda-execution-role --query "Role.Arn"
 aws iam list-attached-role-policies --role-name sml-lambda-execution-role
 
-# IAM Users
-aws iam list-users --query "Users[?starts_with(UserName,'sml-')].UserName"
+# API Gateway
+aws apigateway get-rest-api --rest-api-id bg7yhanxyg --region us-east-1
+
+# Lambdas
+aws lambda list-functions --query "Functions[?starts_with(FunctionName,'sml-')].FunctionName"
 ```
 
 ---
 
-## 9. Alertas de costos
+## 10. Alertas de costos
 
 | Recurso | Función |
 |---|---|
@@ -370,12 +281,10 @@ aws iam list-users --query "Users[?starts_with(UserName,'sml-')].UserName"
 
 ---
 
-## 10. Cleanup
-
-Comandos para borrar la infraestructura cuando el proyecto termine:
+## 11. Cleanup
 
 ```bash
-# S3 (vaciar antes de borrar)
+# S3
 aws s3 rm s3://sml-images-input --recursive && aws s3api delete-bucket --bucket sml-images-input
 aws s3 rm s3://sml-images-output --recursive && aws s3api delete-bucket --bucket sml-images-output
 aws s3 rm s3://sml-frontend --recursive && aws s3api delete-bucket --bucket sml-frontend
@@ -387,9 +296,13 @@ aws dynamodb delete-table --table-name sml-image-metadata
 # SNS
 aws sns delete-topic --topic-arn arn:aws:sns:us-east-1:372123585270:sml-image-notifications
 
-# IAM Role (detach antes de borrar)
+# IAM Role
 for policy in AWSLambdaBasicExecutionRole AmazonS3FullAccess AmazonDynamoDBFullAccess AmazonSNSFullAccess; do
-  aws iam detach-role-policy --role-name sml-lambda-execution-role --policy-arn arn:aws:iam::aws:policy/$policy
+  aws iam detach-role-policy --role-name sml-lambda-execution-role \
+    --policy-arn arn:aws:iam::aws:policy/$policy
 done
 aws iam delete-role --role-name sml-lambda-execution-role
+
+# CloudFormation
+aws cloudformation delete-stack --stack-name sml-api
 ```
