@@ -15,22 +15,25 @@ CloudFront  ──(1a)──►  S3 sml-frontend       (sitio estático, origen 
   └──(1b)──►  API Gateway  ──►  Lambda sml-generate-presigned-url
                                       │
                                       ├──► DynamoDB  (registro PENDING)
-                                      └──► devuelve { uploadUrl, imageId }
-                                               │
-                                               ▼
-                                    S3 sml-images-input  (PUT directo desde el navegador)
-                                               │
-                                         ObjectCreated
-                                               │
-                                               ▼
-                                    Lambda sml-process-image
-                                               │
-                                    ┌──────────┼──────────────┐
-                                    ▼          ▼              ▼
-                              S3 output   DynamoDB         SNS
-                           (imagen        (estado →     (notificación
-                           optimizada)    COMPLETED)     por email)
+                                      └──► devuelve { uploadUrl, imageId, key }
+                                                    │
+                                                    ▼
+                                       S3 sml-images-input  (PUT directo desde el navegador)
+                                                    │
+                                              ObjectCreated
+                                              (jpg/jpeg/png/webp)
+                                                    │
+                                                    ▼
+                                       Lambda sml-process-image
+                                                    │
+                                       ┌────────────┼────────────┐
+                                       ▼            ▼            ▼
+                                 S3 output      DynamoDB        SNS
+                              (imagen .jpg   (estado →      (notificación
+                              optimizada)    COMPLETED)      por email)
 ```
+
+El frontend sondea `sml-images-output` cada 2 s hasta confirmar el archivo (máx. 120 s / 60 intentos).
 
 ---
 
@@ -61,14 +64,16 @@ CloudFront  ──(1a)──►  S3 sml-frontend       (sitio estático, origen 
 |---|---|---|
 | `sml-frontend` | Privado (solo CloudFront) | Archivos estáticos del frontend |
 | `sml-images-input` | Privado · URL pre-firmada | Imágenes originales subidas por el usuario |
-| `sml-images-output` | Lectura pública | Imágenes optimizadas |
+| `sml-images-output` | Lectura pública | Imágenes optimizadas (siempre `.jpg`) |
 
 ### Lambda
 
-| Función | Trigger | Descripción |
-|---|---|---|
-| `sml-generate-presigned-url` | `POST /upload` | Genera URL pre-firmada de S3 (5 min) y registra metadata en DynamoDB |
-| `sml-process-image` | S3 `ObjectCreated` en `sml-images-input` | Comprime la imagen con Sharp, actualiza DynamoDB y publica a SNS |
+| Función | Trigger | Memoria | Timeout | Descripción |
+|---|---|---|---|---|
+| `sml-generate-presigned-url` | `POST /upload` | 256 MB | 15 s | Genera URL pre-firmada de S3 (5 min) y registra metadata en DynamoDB |
+| `sml-process-image` | S3 `ObjectCreated` en `sml-images-input` | 512 MB | 60 s | Comprime la imagen con Sharp, actualiza DynamoDB y publica a SNS |
+
+> `sml-process-image` acepta jpg, jpeg, png y webp como entrada. La salida siempre es JPEG (los formatos con transparencia la pierden).
 
 ### API Gateway
 
@@ -76,9 +81,9 @@ URL base: `https://bg7yhanxyg.execute-api.us-east-1.amazonaws.com/prod`
 
 | Método | Ruta | Estado |
 |---|---|---|
-| POST | `/upload` | Integrado con `sml-generate-presigned-url` |
-| GET | `/history` | Pendiente de implementación |
-| GET | `/status/{id}` | Pendiente de implementación |
+| POST | `/upload` | Integrado con Lambda `sml-generate-presigned-url` |
+| GET | `/history` | MOCK — pendiente de implementación |
+| GET | `/status/{id}` | MOCK — pendiente de implementación |
 
 ### Otros recursos
 
@@ -122,16 +127,17 @@ El pipeline de GitHub Actions (`deploy.yml`) se dispara en cada push a `main` (e
 **Orden de ejecución:**
 
 ```
-deploy-lambdas ──┬──► deploy-infra ──► deploy-frontend
-                 └──► configure-s3-trigger
+deploy-lambdas ──► deploy-infra         ──► deploy-frontend
+                   configure-s3-trigger
+                   (ambos en paralelo)
 ```
 
 | Job | Descripción |
 |---|---|
-| `deploy-lambdas` | Empaqueta y despliega ambas Lambdas |
+| `deploy-lambdas` | Empaqueta y despliega ambas Lambdas (estrategia de matriz) |
 | `deploy-infra` | Despliega el stack CloudFormation y fuerza redespliegue del stage `prod` |
-| `configure-s3-trigger` | Configura la notificación S3 → Lambda (idempotente) |
-| `deploy-frontend` | Inyecta la API URL en `config.js` y sincroniza a S3 |
+| `configure-s3-trigger` | Configura la notificación S3 → Lambda con filtros por prefijo y sufijo (idempotente) |
+| `deploy-frontend` | Lee `API_URL` del stack CloudFormation, la inyecta en `config.js` via `sed` y sincroniza a S3 |
 
 **Secrets requeridos en GitHub:**
 
@@ -151,9 +157,15 @@ aws cloudformation deploy \
   --stack-name sml-api \
   --region us-east-1
 
-# Lambda (ejecutar en el directorio correspondiente)
+# Forzar redespliegue del stage prod (CloudFormation no lo hace automáticamente)
+aws apigateway create-deployment \
+  --rest-api-id bg7yhanxyg \
+  --stage-name prod \
+  --region us-east-1
+
+# Lambda (ejecutar dentro del directorio de la función)
 npm ci --omit=dev
-zip -r function.zip .
+zip -r function.zip . --exclude "*.test.js" "*.spec.js" ".env*" "coverage/*"
 aws lambda update-function-code --function-name <nombre> --zip-file fileb://function.zip
 
 # Frontend
@@ -164,20 +176,24 @@ aws s3 sync frontend/ s3://sml-frontend/ --delete
 
 ## Esquema DynamoDB
 
+Tabla: `sml-image-metadata` · PK: `imageId` (String) · Billing: PAY_PER_REQUEST
+
 ```json
 {
   "imageId":       "uuid-v4",
   "fileName":      "foto.jpg",
   "originalSize":  4523891,
   "processedSize": 845712,
-  "status":        "PROCESSED",
+  "status":        "COMPLETED",
   "outputUrl":     "https://sml-images-output.s3.us-east-1.amazonaws.com/uuid-v4.jpg",
   "createdAt":     "2026-05-10T15:30:00Z",
   "processedAt":   "2026-05-10T15:30:08Z"
 }
 ```
 
-**Estados:** `PENDING` → `PROCESSING` → `PROCESSED` / `FAILED`
+**Estados:** `PENDING` → `COMPLETED` / `FAILED`
+
+> En caso de error, `sml-process-image` escribe `status: "FAILED"` junto al campo `error` con el mensaje de la excepción.
 
 ---
 
@@ -190,7 +206,7 @@ for bucket in sml-images-input sml-images-output sml-frontend; do
   aws s3api delete-bucket --bucket $bucket
 done
 
-# DynamoDB
+# DynamoDB (desactivar protección antes de eliminar)
 aws dynamodb update-table --table-name sml-image-metadata --no-deletion-protection-enabled
 aws dynamodb delete-table --table-name sml-image-metadata
 

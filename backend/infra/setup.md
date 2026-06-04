@@ -48,7 +48,7 @@ aws sts get-caller-identity
 | Versionado | Deshabilitado |
 | CORS | Configurado (PUT/POST/GET) |
 
-Flujo: el frontend solicita una presigned URL → realiza `PUT` directo al bucket → el upload dispara la Lambda `sml-process-image`.
+Flujo: el frontend solicita una presigned URL → realiza `PUT` directo al bucket con la clave `uploads/{imageId}-{fileName}` → el upload dispara la Lambda `sml-process-image`.
 
 CORS:
 
@@ -64,7 +64,7 @@ CORS:
 ]
 ```
 
-> `AllowedOrigins: ["*"]` debe restringirse al dominio CloudFront cuando esté configurado.
+> `AllowedOrigins: ["*"]` debe restringirse al dominio CloudFront en ambientes productivos.
 
 ---
 
@@ -77,7 +77,7 @@ CORS:
 | Acceso público | Lectura (`s3:GetObject`) |
 | URL patrón | `https://sml-images-output.s3.us-east-1.amazonaws.com/{imageId}.jpg` |
 
-La Lambda `sml-process-image` escribe aquí las imágenes optimizadas. La URL pública se persiste en DynamoDB y se publica al topic SNS.
+La Lambda `sml-process-image` escribe aquí las imágenes optimizadas en formato JPEG (siempre `.jpg`, independiente del formato de entrada). La URL pública se persiste en DynamoDB y se publica al topic SNS.
 
 Bucket policy:
 
@@ -132,18 +132,20 @@ Esquema de item:
 
 ```json
 {
-  "imageId": "uuid-v4-string",
-  "fileName": "foto.jpg",
-  "originalSize": 4523891,
+  "imageId":       "uuid-v4-string",
+  "fileName":      "foto.jpg",
+  "originalSize":  4523891,
   "processedSize": 845712,
-  "status": "PROCESSED",
-  "outputUrl": "https://sml-images-output.s3.us-east-1.amazonaws.com/uuid-v4.jpg",
-  "createdAt": "2026-05-10T15:30:00Z",
-  "processedAt": "2026-05-10T15:30:08Z"
+  "status":        "COMPLETED",
+  "outputUrl":     "https://sml-images-output.s3.us-east-1.amazonaws.com/uuid-v4.jpg",
+  "createdAt":     "2026-05-10T15:30:00Z",
+  "processedAt":   "2026-05-10T15:30:08Z"
 }
 ```
 
-Estados válidos: `PENDING` → `PROCESSING` → `PROCESSED` / `FAILED`
+Estados válidos: `PENDING` → `COMPLETED` / `FAILED`
+
+> En caso de error durante el procesamiento, la Lambda escribe `status: "FAILED"` junto al campo `error` con el mensaje de la excepción. No existe un estado intermedio `PROCESSING`.
 
 ---
 
@@ -162,19 +164,7 @@ Suscripciones activas:
 |---|---|---|
 | EMAIL | `omaruzgonzalez@gmail.com` | Confirmed |
 
-Ejemplo de publicación desde Lambda:
-
-```javascript
-import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
-
-const sns = new SNSClient({ region: "us-east-1" });
-
-await sns.send(new PublishCommand({
-  TopicArn: "arn:aws:sns:us-east-1:372123585270:sml-image-notifications",
-  Subject: "Imagen procesada",
-  Message: JSON.stringify({ imageId, outputUrl })
-}));
-```
+El mensaje publicado por `sml-process-image` incluye: `imageId`, `outputUrl`, `originalSize`, `processedSize` y `compressionRatio%`.
 
 ---
 
@@ -214,8 +204,11 @@ Endpoints:
 | POST | `/upload` | Lambda `sml-generate-presigned-url` (AWS_PROXY) |
 | GET | `/history` | MOCK (pendiente de implementación) |
 | GET | `/status/{id}` | MOCK (pendiente de implementación) |
+| OPTIONS | `*` | MOCK (preflight CORS) |
 
-Para redesplegar después de cambios en el template:
+> CloudFormation **no** redesplega el stage automáticamente al actualizar integraciones. Siempre ejecutar `aws apigateway create-deployment` después de cambios en el template.
+
+Para redesplegar después de cambios:
 
 ```bash
 aws cloudformation deploy \
@@ -234,10 +227,14 @@ aws apigateway create-deployment \
 
 ## 8. Lambda Functions
 
-| Función | Runtime | Trigger | Directorio |
-|---|---|---|---|
-| `sml-generate-presigned-url` | Node.js 18.x | API Gateway `POST /upload` | `backend/lambdas/generatePresignedUrl/` |
-| `sml-process-image` | Node.js 18.x | S3 `ObjectCreated` en `sml-images-input` | `backend/lambdas/processImage/` |
+| Función | Runtime | Memoria | Timeout | Trigger | Directorio |
+|---|---|---|---|---|---|
+| `sml-generate-presigned-url` | Node.js 18.x | 256 MB | 15 s | API Gateway `POST /upload` | `backend/lambdas/generatePresignedUrl/` |
+| `sml-process-image` | Node.js 18.x | 512 MB | 60 s | S3 `ObjectCreated` en `sml-images-input` | `backend/lambdas/processImage/` |
+
+El trigger S3 de `sml-process-image` usa prefijo `uploads/` con filtros de sufijo separados para `jpg`, `jpeg`, `png` y `webp`.
+
+> El ARN del topic SNS y el nombre del bucket de salida están **hard-codeados** en `processImage/index.js`. Actualizar el fuente si los nombres de los recursos cambian.
 
 ---
 
@@ -285,11 +282,12 @@ aws lambda list-functions --query "Functions[?starts_with(FunctionName,'sml-')].
 
 ```bash
 # S3
-aws s3 rm s3://sml-images-input --recursive && aws s3api delete-bucket --bucket sml-images-input
-aws s3 rm s3://sml-images-output --recursive && aws s3api delete-bucket --bucket sml-images-output
-aws s3 rm s3://sml-frontend --recursive && aws s3api delete-bucket --bucket sml-frontend
+for bucket in sml-images-input sml-images-output sml-frontend; do
+  aws s3 rm s3://$bucket --recursive
+  aws s3api delete-bucket --bucket $bucket
+done
 
-# DynamoDB
+# DynamoDB (desactivar protección antes de eliminar)
 aws dynamodb update-table --table-name sml-image-metadata --no-deletion-protection-enabled
 aws dynamodb delete-table --table-name sml-image-metadata
 
