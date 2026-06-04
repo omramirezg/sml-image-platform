@@ -219,6 +219,22 @@ jobs:
 
           grant_permission "sml-generate-presigned-url" "apigw-upload" "${BASE_ARN}/*/POST/upload"
 
+      - name: Configurar CORS en sml-images-output
+        run: |
+          aws s3api put-bucket-cors \
+            --bucket sml-images-output \
+            --cors-configuration '{
+              "CORSRules": [{
+                "AllowedHeaders": ["*"],
+                "AllowedMethods": ["GET"],
+                "AllowedOrigins": ["*"],
+                "ExposeHeaders": ["Content-Length", "Content-Type"],
+                "MaxAgeSeconds": 3000
+              }]
+            }' \
+            --region "${{ env.AWS_REGION }}"
+          echo "CORS configurado en sml-images-output."
+
       - name: Mostrar outputs del stack
         run: |
           aws cloudformation describe-stacks \

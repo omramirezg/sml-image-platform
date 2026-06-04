@@ -118,14 +118,9 @@
 
   async function fetchHistory() {
     if (CFG.DEMO_MODE) {
-      // In demo mode, return whatever is stored in localStorage
       return loadDemoHistory();
     }
-    const url = apiUrl(CFG.ENDPOINTS.HISTORY);
-    if (!url) return [];
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`History: ${res.status}`);
-    return res.json();
+    return loadRealHistory();
   }
 
   // ---------- Output bucket polling ----------
@@ -206,6 +201,19 @@
     const items = loadDemoHistory().filter((it) => it.imageId !== imageId);
     saveDemoHistory(items);
     return items;
+  }
+
+  // ---------- LocalStorage for real-mode history ----------
+  const REAL_KEY = "sml.real.history";
+  function loadRealHistory() {
+    try { return JSON.parse(localStorage.getItem(REAL_KEY) || "[]"); }
+    catch { return []; }
+  }
+  function pushRealHistory(entry) {
+    const items = loadRealHistory();
+    items.unshift(entry);
+    try { localStorage.setItem(REAL_KEY, JSON.stringify(items.slice(0, 24))); }
+    catch {}
   }
 
   // ---------- UI state ----------
@@ -307,10 +315,17 @@
         renderHistory(await fetchHistory());
       } else {
         processedUrl = await waitForProcessedImage(imageId);
-        // sizeAfter is unknown without a HEAD — backend returns it via history
         sizeAfter = null;
-        // Refresh history once finished
-        renderHistory(await fetchHistory()).catch(() => {});
+        pushRealHistory({
+          imageId,
+          originalName: file.name,
+          sizeBefore: file.size,
+          sizeAfter: null,
+          processedUrl,
+          status: "processed",
+          createdAt: Date.now()
+        });
+        renderHistory(fetchHistory()).catch(() => {});
       }
 
       showProcessed(processedUrl, sizeAfter, file.size);
@@ -395,6 +410,29 @@
   }
 
   // ---------- Events ----------
+  // Download: el atributo download es ignorado en links cross-origin (CloudFront ≠ S3).
+  // Se intercepta el click, se trae la imagen como blob y se crea un link local.
+  downloadBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const href = downloadBtn.getAttribute("href");
+    if (!href) return;
+    try {
+      const res = await fetch(href, { mode: "cors" });
+      if (!res.ok) throw new Error("fetch failed");
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = (originalName.textContent || "imagen").replace(/\.[^.]+$/, "") + "-optimizada.jpg";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    } catch {
+      window.open(href, "_blank", "noopener");
+    }
+  });
+
   dropZone.addEventListener("click", () => fileInput.click());
   dropZone.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {
