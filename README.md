@@ -2,6 +2,8 @@
 
 Plataforma serverless orientada a eventos para carga, optimización automática y almacenamiento de imágenes, desplegada sobre AWS con Infrastructure as Code.
 
+**Demo en vivo:** [http://sml-frontend.s3-website-us-east-1.amazonaws.com](http://sml-frontend.s3-website-us-east-1.amazonaws.com)
+
 ---
 
 ## Cómo funciona
